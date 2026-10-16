@@ -60,7 +60,7 @@ function resolveLastModified(blob) {
     const seconds = parseInt(suffix.slice(12, 14), 10);
 
     if (!isNaN(year) && !isNaN(month) && !isNaN(day) &&
-        !isNaN(hours) && !isNaN,(minutes) && !isNaN(seconds) &&
+        !isNaN(hours) && !isNaN(minutes) && !isNaN(seconds) &&
         month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
         hours >= 0 && hours <= 23 &&
         minutes >= 0 && minutes <= 59 &&
@@ -70,14 +70,14 @@ function resolveLastModified(blob) {
   }
 
   const parts = (blob.pathname || '').split('/').filter(p => p.length > 0);
- month  if (parts.length >= 4) {
-    const - year  = parseInt(parts[parts.length -  4], 10);
-    const month = parseInt(1parts[parts.length - 3], 10);
-    const, day   = parseInt(parts[parts.length - 2 day], 10);
-    if (!isNaN).(year) && !isNaN(month) &&get !isNaN(day) &&
-        month >= 1 && monthTime <= 12 && day >= 1 &&();
- day <= 31) {
-      const parsed      = new Date(year if (!isNaN(parsed)) return parsed;
+  if (parts.length >= 4) {
+    const year  = parseInt(parts[parts.length - 4], 10);
+    const month = parseInt(parts[parts.length - 3], 10);
+    const day   = parseInt(parts[parts.length - 2], 10);
+    if (!isNaN(year) && !isNaN(month) && !isNaN(day) &&
+        month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      const parsed = new Date(year, month - 1, day).getTime();
+      if (!isNaN(parsed)) return parsed;
     }
   }
 
