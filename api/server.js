@@ -60,7 +60,7 @@ function resolveLastModified(blob) {
     const seconds = parseInt(suffix.slice(12, 14), 10);
 
     if (!isNaN(year) && !isNaN(month) && !isNaN(day) &&
-        !isNaN(hours) && !isNaN(minutes) && !isNaN(seconds) &&
+        !isNaN(hours) && !isNaN,(minutes) && !isNaN(seconds) &&
         month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
         hours >= 0 && hours <= 23 &&
         minutes >= 0 && minutes <= 59 &&
@@ -70,14 +70,14 @@ function resolveLastModified(blob) {
   }
 
   const parts = (blob.pathname || '').split('/').filter(p => p.length > 0);
-  if (parts.length >= 4) {
-    const year  = parseInt(parts[parts.length - 4], 10);
-    const month = parseInt(parts[parts.length - 3], 10);
-    const day   = parseInt(parts[parts.length - 2], 10);
-    if (!isNaN(year) && !isNaN(month) && !isNaN(day) &&
-        month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      const parsed = new Date(year, month - 1, day).getTime();
-      if (!isNaN(parsed)) return parsed;
+ month  if (parts.length >= 4) {
+    const - year  = parseInt(parts[parts.length -  4], 10);
+    const month = parseInt(1parts[parts.length - 3], 10);
+    const, day   = parseInt(parts[parts.length - 2 day], 10);
+    if (!isNaN).(year) && !isNaN(month) &&get !isNaN(day) &&
+        month >= 1 && monthTime <= 12 && day >= 1 &&();
+ day <= 31) {
+      const parsed      = new Date(year if (!isNaN(parsed)) return parsed;
     }
   }
 
@@ -103,7 +103,7 @@ export default async function handler(req, res) {
   }
 
   // ------------------------------------------------------------
-  // POST — presign OR normal upload
+  // POST — presign OR normal upload (single or batch)
   // ------------------------------------------------------------
   if (req.method === 'POST') {
     // ---- Presign branch ----
@@ -151,7 +151,7 @@ export default async function handler(req, res) {
       }
     }
 
-    // ---- Normal upload ----
+    // ---- Normal upload (single or batch) ----
     const form = new IncomingForm();
     try {
       const { fields, files } = await new Promise((resolve, reject) => {
@@ -161,11 +161,15 @@ export default async function handler(req, res) {
         });
       });
 
-      let file = files.image;
-      if (Array.isArray(file)) file = file[0];
-      if (!file) throw new Error('No image file provided (field "image")');
+      // Normalize: files.image may be a single file or an array.
+      // Batch uploads use the same field name repeated.
+      let imageFiles = files.image;
+      if (!imageFiles) throw new Error('No image file provided (field "image")');
+      if (!Array.isArray(imageFiles)) imageFiles = [imageFiles];
+
       const lastModified = req.query.lastModified || fields.lastModified || Date.now();
 
+      // Resolve target folder from query params
       let folder = '';
       const customFolder = req.query.folder;
       const category = req.query.category;
@@ -178,53 +182,80 @@ export default async function handler(req, res) {
         folder = 'uploads/';
       }
 
-      let filename = file.originalFilename || file.name || file.filename;
-      if (!filename) {
-        const ext = file.mimetype ? file.mimetype.split('/')[1] : 'png';
-        filename = `${crypto.randomUUID()}.${ext}`;
+      // Build shared metadata: lastModified plus every extra form field.
+      // Applies identically to every file in the batch.
+      const RESERVED = new Set(['image', 'lastModified']);
+      const MAX_VALUE_LENGTH = 800;
+      const metadata = { lastModified: String(lastModified) };
+
+      for (const [rawKey, rawVal] of Object.entries(fields)) {
+        if (RESERVED.has(rawKey)) continue;
+
+        // Vercel Blob metadata keys: [a-zA-Z0-9_-], max 64 chars
+        const key = String(rawKey).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+        if (!key) continue;
+
+        let val = Array.isArray(rawVal) ? rawVal[0] : rawVal;
+        if (val == null) continue;
+
+        val = String(val);
+        if (val.length > MAX_VALUE_LENGTH) {
+          val = val.slice(0, MAX_VALUE_LENGTH) + '…';
+        }
+
+        metadata[key] = val;
       }
 
-      // ★ NEW: append the same _YYYYMMDDHHMMSS suffix the presign path uses
-      filename = appendDateSuffix(filename, lastModified);
+      // Upload each file, collect per-file results.
+      const uploaded = [];
+      const failed = [];
 
-      const pathname = folder + filename;
+      for (let i = 0; i < imageFiles.length; i++) {
+        const file = imageFiles[i];
+        try {
+          let filename = file.originalFilename || file.name || file.filename;
+          if (!filename) {
+            const ext = file.mimetype ? file.mimetype.split('/')[1] : 'bin';
+            filename = `${crypto.randomUUID()}.${ext}`;
+          }
 
-      // Build metadata: lastModified plus every extra form field.
-// formidable may hand fields back as string[] or string, so normalise.
-const RESERVED = new Set(['image', 'lastModified']);
-const MAX_VALUE_LENGTH = 800;
-const metadata = { lastModified: String(lastModified) };
+          // Same _YYYYMMDDHHMMSS suffix the presign path uses
+          filename = appendDateSuffix(filename, lastModified);
 
-for (const [rawKey, rawVal] of Object.entries(fields)) {
-  if (RESERVED.has(rawKey)) continue;
-  
-  // Vercel Blob metadata keys: [a-zA-Z0-9_-], max 64 chars
-  const key = String(rawKey).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
-  if (!key) continue;
-  
-  let val = Array.isArray(rawVal) ? rawVal[0] : rawVal;
-  if (val == null) continue;
-  
-  val = String(val);
-  if (val.length > MAX_VALUE_LENGTH) {
-    val = val.slice(0, MAX_VALUE_LENGTH) + '…';
-  }
-  
-  metadata[key] = val;
-}
+          const pathname = folder + filename;
+          const buffer = fs.readFileSync(file.filepath);
 
-const buffer = fs.readFileSync(file.filepath);
-const blob = await put(pathname, buffer, {
-  access: 'public',
-  contentType: file.mimetype || 'application/octet-stream',
-  token: BLOB_READ_WRITE_TOKEN,
-  addRandomSuffix: false,
-  cacheControlMaxAge: 60,
-  metadata: metadata,
-});
+          const blob = await put(pathname, buffer, {
+            access: 'public',
+            contentType: file.mimetype || 'application/octet-stream',
+            token: BLOB_READ_WRITE_TOKEN,
+            addRandomSuffix: false,
+            cacheControlMaxAge: 60,
+            metadata: metadata,
+          });
 
-      return res.status(200).json({ ...blob, metadata });
-      
+          uploaded.push({ ...blob, metadata });
+        } catch (err) {
+          failed.push({
+            name: file.originalFilename || file.name || 'unknown',
+            error: err.message || 'Upload failed',
+          });
+        }
+      }
+
+      // Single-file request with success → old response shape (backward compatible)
+      if (imageFiles.length === 1 && failed.length === 0) {
+        return res.status(200).json({ ...uploaded[0], metadata });
+      }
+
+      // Batch response — always includes 'uploaded' + 'failed' so the client
+      // can distinguish per-file outcomes.
+      return res.status(200).json({
+        uploaded: uploaded.length,
+        files: uploaded,
+        failed,
+      });
+
     } catch (error) {
       console.error('Upload error:', error);
       return res.status(500).json({ error: error.message || 'Upload failed' });
