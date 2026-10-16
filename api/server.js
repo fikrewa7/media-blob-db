@@ -125,8 +125,11 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: 'filename is required' });
         }
 
-        const finalFilename = appendDateSuffix(filename, lastModified);
-        const pathname      = `uploads/${category}/${finalFilename}`;
+        const shouldSuffix = category.indexOf('files') !== 0;
+const finalFilename = shouldSuffix ?
+  appendDateSuffix(filename, lastModified) :
+  filename;
+const pathname = `uploads/${category}/${finalFilename}`;
 
         const { clientSigningToken, delegationToken } = await issueSignedToken({
           token: BLOB_READ_WRITE_TOKEN,
@@ -220,7 +223,11 @@ export default async function handler(req, res) {
           }
 
           // Same _YYYYMMDDHHMMSS suffix the presign path uses
-          filename = appendDateSuffix(filename, lastModified);
+          // Skip the date suffix for user files — keep original names intact.
+// Images and videos keep it for uniqueness; files preserve the name.
+if (folder.indexOf('uploads/files/') !== 0) {
+  filename = appendDateSuffix(filename, lastModified);
+}
 
           const pathname = folder + filename;
           const buffer = fs.readFileSync(file.filepath);
